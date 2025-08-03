@@ -9,6 +9,9 @@ from rlcf_framework import models, schemas, services, aggregation_engine, bias_a
 from rlcf_framework.database import SessionLocal, engine
 from rlcf_framework.config import load_model_config, load_task_config, model_settings, task_settings
 from rlcf_framework.models import TaskType, TaskStatus
+from rlcf_framework import devils_advocate, training_scheduler
+import json
+import numpy as np
 
 # --- Setup del Database ---
 models.Base.metadata.create_all(bind=engine)
@@ -179,6 +182,216 @@ def export_data(task_type: str, export_format: str, output_file: str):
     except Exception as e:
         return f"Errore durante l'esportazione: {e}"
 
+# --- Nuove funzioni per visualizzazioni avanzate ---
+def visualize_uncertainty_output(task_id: int):
+    """Crea una visualizzazione ricca dell'output con incertezza."""
+    if not task_id:
+        return gr.HTML("<p>Inserisci un ID task valido</p>")
+    
+    db: Session = next(get_db())
+    try:
+        result = aggregation_engine.aggregate_with_uncertainty(db, task_id)
+        
+        if "error" in result:
+            return gr.HTML(f"<div style='color: red;'><strong>Errore:</strong> {result['error']}</div>")
+        
+        # Crea HTML per visualizzazione strutturata
+        html = f"""
+        <div style='background-color: #f8f9fa; padding: 20px; border-radius: 10px; font-family: Arial, sans-serif;'>
+            <h3 style='color: #2c3e50; margin-bottom: 20px;'>📊 Risultato Aggregato per Task {task_id}</h3>
+            
+            <div style='background-color: white; padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 4px solid #3498db;'>
+                <h4 style='color: #34495e; margin-top: 0;'>🎯 Risposta Primaria</h4>
+                <p style='font-size: 16px; margin: 10px 0;'><strong>{result.get('primary_answer', result.get('consensus_answer', 'N/A'))}</strong></p>
+                <p style='margin: 5px 0;'>Livello di Confidenza: <span style='color: {"green" if result.get("confidence_level", 0) > 0.7 else "orange" if result.get("confidence_level", 0) > 0.4 else "red"}; font-weight: bold;'>{result.get("confidence_level", 0) * 100:.1f}%</span></p>
+            </div>
+        """
+        
+        if 'alternative_positions' in result and result['alternative_positions']:
+            html += """
+            <div style='background-color: #fff3cd; padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 4px solid #f39c12;'>
+                <h4 style='color: #8b7d3a; margin-top: 0;'>🔄 Posizioni Alternative</h4>
+            """
+            for i, alt in enumerate(result['alternative_positions'][:3]):
+                html += f"""
+                <div style='margin: 8px 0; padding: 8px; background-color: #fefefe; border-radius: 4px;'>
+                    <strong>Alternativa {i+1}:</strong> {alt.get('position', 'N/A')}<br>
+                    <small>Supporto: {alt.get('support', 'N/A')} | Sostenitori: {', '.join(alt.get('supporters', [])[:2])}</small>
+                </div>
+                """
+            html += "</div>"
+        
+        if 'expert_disagreement' in result:
+            disagreement = result['expert_disagreement']
+            html += """
+            <div style='background-color: #d1ecf1; padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 4px solid #17a2b8;'>
+                <h4 style='color: #0c5460; margin-top: 0;'>⚖️ Analisi del Disaccordo</h4>
+            """
+            
+            if disagreement.get('consensus_areas'):
+                html += "<p><strong>✅ Aree di Consenso:</strong></p><ul>"
+                for area in disagreement['consensus_areas'][:3]:
+                    html += f"<li style='margin: 2px 0;'>{area}</li>"
+                html += "</ul>"
+            
+            if disagreement.get('contention_points'):
+                html += "<p><strong>⚠️ Punti di Contesa:</strong></p><ul>"
+                for point in disagreement['contention_points'][:3]:
+                    html += f"<li style='margin: 2px 0;'>{point.get('aspect', 'N/A')} (Disaccordo: {point.get('disagreement_level', 0):.2f})</li>"
+                html += "</ul>"
+            
+            if disagreement.get('reasoning_patterns'):
+                html += "<p><strong>🧠 Pattern di Ragionamento:</strong></p>"
+                for pattern, users in disagreement['reasoning_patterns'].items():
+                    html += f"<span style='display: inline-block; margin: 3px; padding: 3px 8px; background-color: #e9ecef; border-radius: 12px; font-size: 12px;'>{pattern}: {len(users)}</span>"
+            
+            html += "</div>"
+        
+        if 'transparency_metrics' in result:
+            metrics = result['transparency_metrics']
+            html += f"""
+            <div style='background-color: #d4edda; padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 4px solid #28a745;'>
+                <h4 style='color: #155724; margin-top: 0;'>📈 Metriche di Trasparenza</h4>
+                <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;'>
+                    <div><strong>Valutatori:</strong> {metrics.get('evaluator_count', 'N/A')}</div>
+                    <div><strong>Peso Autorità:</strong> {metrics.get('total_authority_weight', 'N/A'):.2f}</div>
+                    <div><strong>Disaccordo:</strong> {metrics.get('disagreement_score', 'N/A'):.3f}</div>
+                </div>
+            </div>
+            """
+        
+        html += "</div>"
+        return gr.HTML(html)
+        
+    except Exception as e:
+        return gr.HTML(f"<div style='color: red;'>Errore nell'elaborazione: {str(e)}</div>")
+    finally:
+        db.close()
+
+def get_bias_analysis_report(task_id: int):
+    """Genera un report dettagliato sui bias per un task."""
+    if not task_id:
+        return "Inserisci un ID task valido"
+    
+    db: Session = next(get_db())
+    try:
+        bias_report = bias_analysis.calculate_total_bias(db, task_id)
+        
+        # Genera HTML report
+        html = f"""
+        <div style='background-color: #f8f9fa; padding: 20px; border-radius: 10px;'>
+            <h3 style='color: #dc3545;'>🔍 Analisi Bias - Task {task_id}</h3>
+            
+            <div style='background-color: white; padding: 15px; margin: 10px 0; border-radius: 8px;'>
+                <h4>📊 Punteggi Bias</h4>
+                <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;'>
+        """
+        
+        bias_types = [
+            ('demographic_bias', 'Demografico', '👥'),
+            ('professional_clustering', 'Clustering Prof.', '💼'),
+            ('temporal_drift', 'Deriva Temporale', '⏰'),
+            ('geographic_concentration', 'Concentrazione Geo.', '🌍'),
+            ('confirmation_bias', 'Conferma', '✅'),
+            ('anchoring_bias', 'Ancoraggio', '⚓')
+        ]
+        
+        for bias_key, bias_name, icon in bias_types:
+            if bias_key in bias_report:
+                score = bias_report[bias_key]
+                color = 'red' if score > 0.6 else 'orange' if score > 0.3 else 'green'
+                html += f"""
+                <div style='text-align: center; padding: 10px; border: 1px solid #dee2e6; border-radius: 5px;'>
+                    <div style='font-size: 24px;'>{icon}</div>
+                    <div style='font-weight: bold; color: {color};'>{score:.3f}</div>
+                    <div style='font-size: 12px; color: #6c757d;'>{bias_name}</div>
+                </div>
+                """
+        
+        html += f"""
+                </div>
+                
+                <div style='margin-top: 20px; padding: 15px; background-color: {"#f8d7da" if bias_report.get("bias_level") == "high" else "#fff3cd" if bias_report.get("bias_level") == "medium" else "#d4edda"}; border-radius: 5px;'>
+                    <strong>Livello Complessivo: {bias_report.get('bias_level', 'unknown').upper()}</strong>
+                    (Punteggio: {bias_report.get('total_bias_score', 0):.3f})
+                </div>
+                
+                <div style='margin-top: 15px;'>
+                    <h5>🏆 Bias Dominanti:</h5>
+                    <ol>
+        """
+        
+        for bias_name, score in bias_report.get('dominant_bias_types', [])[:3]:
+            html += f"<li>{bias_name.replace('_', ' ').title()}: {score:.3f}</li>"
+        
+        html += """
+                    </ol>
+                </div>
+            </div>
+        </div>
+        """
+        
+        return html
+        
+    except Exception as e:
+        return f"Errore nell'analisi bias: {str(e)}"
+    finally:
+        db.close()
+
+
+def assign_devils_advocates(task_id: int, percentage: float = 10):
+    """Assegna devil's advocates a un task."""
+    if not task_id:
+        return "Inserisci un ID task valido"
+    
+    db: Session = next(get_db())
+    try:
+        assigner = devils_advocate.DevilsAdvocateAssigner(percentage / 100)
+        advocates = assigner.assign_advocates_for_task(db, task_id)
+        
+        return f"✅ Assegnati {len(advocates)} devil's advocates al task {task_id}: {advocates}"
+        
+    except Exception as e:
+        return f"Errore nell'assegnazione: {str(e)}"
+    finally:
+        db.close()
+
+def get_training_cycle_status():
+    """Mostra lo stato del ciclo di training corrente."""
+    db: Session = next(get_db())
+    try:
+        scheduler = training_scheduler.PeriodicTrainingScheduler(db)
+        phase = scheduler.get_current_cycle_phase()
+        
+        cycle_dates = scheduler.get_cycle_dates()
+        
+        html = f"""
+        <div style='background-color: #f8f9fa; padding: 20px; border-radius: 10px;'>
+            <h3 style='color: #495057;'>🔄 Stato Ciclo di Training</h3>
+            
+            <div style='background-color: white; padding: 15px; margin: 10px 0; border-radius: 8px; text-align: center;'>
+                <h4 style='color: #28a745; margin: 0;'>Fase Corrente: {phase.upper()}</h4>
+            </div>
+            
+            <div style='background-color: white; padding: 15px; margin: 10px 0; border-radius: 8px;'>
+                <h4>📅 Date del Ciclo</h4>
+                <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;'>
+                    <div><strong>Inizio:</strong> {cycle_dates['cycle_start'].strftime('%Y-%m-%d')}</div>
+                    <div><strong>Fine Raccolta:</strong> {cycle_dates['collection_end'].strftime('%Y-%m-%d')}</div>
+                    <div><strong>Fine Validazione:</strong> {cycle_dates['validation_end'].strftime('%Y-%m-%d')}</div>
+                    <div><strong>Fine Ciclo:</strong> {cycle_dates['cycle_end'].strftime('%Y-%m-%d')}</div>
+                </div>
+            </div>
+        </div>
+        """
+        
+        return html
+        
+    except Exception as e:
+        return f"Errore nel recupero stato: {str(e)}"
+    finally:
+        db.close()
+
 
 # ========= Definizione dell'Interfaccia Gradio =========
 with gr.Blocks(theme=gr.themes.Soft(), title="RLCF Management UI") as demo:
@@ -276,7 +489,50 @@ with gr.Blocks(theme=gr.themes.Soft(), title="RLCF Management UI") as demo:
                     bias_df = gr.DataFrame(headers=["ID", "Task ID", "User ID", "Tipo Bias", "Score"], interactive=False)
                     gr.Button("Aggiorna Report Bias").click(get_all_bias_reports, outputs=bias_df)
 
-        # --- TAB 7: Export Datasets ---
+        # --- TAB 7: Advanced Analysis & Uncertainty ---
+        with gr.TabItem("🔬 Analisi Avanzata"):
+            gr.Markdown("## Visualizzazioni Avanzate e Analisi dell'Incertezza")
+            
+            with gr.Accordion("📊 Visualizzazione Output con Incertezza", open=True):
+                with gr.Row():
+                    uncertainty_task_id = gr.Number(label="ID del Task", precision=0)
+                    show_uncertainty_btn = gr.Button("Mostra Analisi Dettagliata")
+                uncertainty_output = gr.HTML()
+            
+            with gr.Accordion("🔍 Analisi Bias Dettagliata", open=False):
+                with gr.Row():
+                    bias_task_id = gr.Number(label="ID del Task", precision=0)  
+                    show_bias_btn = gr.Button("Genera Report Bias")
+                bias_report_output = gr.HTML()
+        
+        # --- TAB 8: Devil's Advocate Management ---
+        with gr.TabItem("👹 Devil's Advocate"):
+            gr.Markdown("## Gestione Devil's Advocates")
+            
+            with gr.Accordion("Assegnazione Devil's Advocates", open=True):
+                gr.Markdown("### Assegna Devil's Advocates a un Task")
+                with gr.Row():
+                    devils_task_id = gr.Number(label="ID del Task", precision=0)
+                    devils_percentage = gr.Slider(label="Percentuale (%)", minimum=5, maximum=30, value=10, step=5)
+                    assign_devils_btn = gr.Button("Assegna Devil's Advocates")
+                devils_status = gr.Textbox(label="Stato Assegnazione")
+        
+        # --- TAB 9: Training Cycles ---
+        with gr.TabItem("🔄 Cicli di Training"):
+            gr.Markdown("## Gestione dei Cicli di Training Periodici")
+            
+            with gr.Row():
+                cycle_refresh_btn = gr.Button("🔄 Aggiorna Stato Ciclo")
+            cycle_status_display = gr.HTML()
+            
+            with gr.Accordion("📈 Accountability Report", open=False):
+                gr.Markdown("### Genera Report di Accountability")
+                with gr.Row():
+                    cycle_start_date = gr.Textbox(label="Data Inizio Ciclo (YYYY-MM-DD)", value="2024-01-01")
+                    generate_report_btn = gr.Button("Genera Report")
+                accountability_output = gr.JSON(label="Report di Accountability")
+
+        # --- TAB 10: Export Datasets ---
         with gr.TabItem("📤 Esporta Dataset"):
             gr.Markdown("## Esporta i dati per il Fine-Tuning")
             export_task_type = gr.Dropdown(label="Tipo di Task", choices=[t.value for t in TaskType])
@@ -307,9 +563,20 @@ with gr.Blocks(theme=gr.themes.Soft(), title="RLCF Management UI") as demo:
     # Export
     export_btn.click(export_data, inputs=[export_task_type, export_format_type, export_filename], outputs=export_status)
     
+    # Advanced Analysis
+    show_uncertainty_btn.click(visualize_uncertainty_output, inputs=uncertainty_task_id, outputs=uncertainty_output)
+    show_bias_btn.click(get_bias_analysis_report, inputs=bias_task_id, outputs=bias_report_output)
+    
+    # Devil's Advocate
+    assign_devils_btn.click(assign_devils_advocates, inputs=[devils_task_id, devils_percentage], outputs=devils_status)
+    
+    # Training Cycles  
+    cycle_refresh_btn.click(get_training_cycle_status, outputs=cycle_status_display)
+    
     # Caricamento dati iniziale
     demo.load(get_dashboard_stats, outputs=[users_box, tasks_box, feedbacks_box])
     demo.load(get_all_users, outputs=all_users_df)
+    demo.load(get_training_cycle_status, outputs=cycle_status_display)
 
 if __name__ == "__main__":
     demo.launch()

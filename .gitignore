@@ -110,3 +110,5 @@ dmypy.json
 
 # RLCF specific
 rlcf.db
+.cursor
+CLAUDE.md

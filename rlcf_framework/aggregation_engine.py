@@ -2,7 +2,9 @@ from sqlalchemy.orm import Session
 from . import models
 from scipy.stats import entropy
 from .config import model_settings
-from .task_handlers import get_handler # Import the handler factory
+from .task_handlers import get_handler
+from collections import Counter, defaultdict
+import numpy as np
 
 def calculate_disagreement(weighted_feedback: dict) -> float:
     """
@@ -25,53 +27,162 @@ def calculate_disagreement(weighted_feedback: dict) -> float:
 
     return entropy(probabilities, base=num_positions)
 
+def extract_positions_from_feedback(feedbacks):
+    """Estrae le posizioni distinte dai feedback con i loro sostenitori."""
+    position_supporters = defaultdict(list)
+    
+    for fb in feedbacks:
+        position_key = str(sorted(fb.feedback_data.items()))
+        position_supporters[position_key].append({
+            'user_id': fb.user_id,
+            'username': fb.author.username,
+            'authority': fb.author.authority_score,
+            'reasoning': fb.feedback_data.get('reasoning', '')
+        })
+    
+    return position_supporters
+
+def identify_consensus_and_contention(feedbacks):
+    """Identifica aree di consenso e punti di contesa."""
+    all_keys = set()
+    key_values = defaultdict(Counter)
+    
+    for fb in feedbacks:
+        for key, value in fb.feedback_data.items():
+            all_keys.add(key)
+            key_values[key][str(value)] += fb.author.authority_score
+    
+    consensus_areas = []
+    contention_points = []
+    
+    for key in all_keys:
+        values = key_values[key]
+        if len(values) == 1:
+            consensus_areas.append(f"{key}: {list(values.keys())[0]}")
+        else:
+            total = sum(values.values())
+            probs = [v/total for v in values.values()]
+            disagreement = entropy(probs)
+            if disagreement > 0.5:
+                contention_points.append({
+                    'aspect': key,
+                    'positions': dict(values),
+                    'disagreement_level': disagreement
+                })
+    
+    return consensus_areas, contention_points
+
+def extract_reasoning_patterns(feedbacks):
+    """Estrae pattern di ragionamento dai feedback."""
+    patterns = defaultdict(list)
+    
+    for fb in feedbacks:
+        if 'reasoning' in fb.feedback_data:
+            reasoning = fb.feedback_data['reasoning'].lower()
+            if 'precedent' in reasoning or 'case law' in reasoning:
+                patterns['precedent-based'].append(fb.user_id)
+            elif 'principle' in reasoning or 'fundamental' in reasoning:
+                patterns['principle-based'].append(fb.user_id)
+            elif 'practical' in reasoning or 'consequence' in reasoning:
+                patterns['pragmatic'].append(fb.user_id)
+            else:
+                patterns['other'].append(fb.user_id)
+    
+    return dict(patterns)
+
 def aggregate_with_uncertainty(db: Session, task_id: int) -> dict:
     """
-    Implementa l'Algoritmo 1 (AGGREGATE_WITH_UNCERTAINTY) descritto nella Sez. 3.1 del paper.
-    Il processo aggrega il feedback ponderato per autorità, calcola il disaccordo e produce
-    un output che preserva l'incertezza se il disaccordo supera una soglia (tau).
-    La soglia è definita in `model_settings.thresholds['disagreement']`.
-    Questa function ora utilizza il Task Handler Pattern per delegare l'aggregazione.
+    Implementazione completa dell'Algoritmo 1 con preservazione dell'incertezza.
     """
     task = db.query(models.LegalTask).filter(models.LegalTask.id == task_id).first()
     if not task:
         return {"error": "Task not found.", "type": "Error"}
 
+    # Get all feedback for this task
+    feedbacks = db.query(models.Feedback).join(models.Response).filter(
+        models.Response.task_id == task_id
+    ).all()
+    
+    if not feedbacks:
+        return {"error": "No feedback found for this task.", "type": "NoFeedback"}
+    
+    # Calculate weighted positions
     handler = get_handler(db, task)
     aggregated_data = handler.aggregate_feedback()
-
+    
     if "error" in aggregated_data:
-        return aggregated_data # Return error from handler if no valid feedback
-
-    # Calculate disagreement based on the aggregated data from the handler
-    # This part assumes aggregated_data contains information suitable for disagreement calculation
-    # For classification, aggregated_data["details"] (weighted_labels) can be used.
-    # For other types, the handler should return a structure that allows for this.
-    # For now, we'll use a simplified approach for disagreement calculation,
-    # assuming 'details' key holds the weighted positions.
-    disagreement_input = {str(k): v for k, v in aggregated_data.get("details", {}).items()}
-    disagreement_score = calculate_disagreement(disagreement_input)
-
-    # Apply uncertainty-preserving output structure based on disagreement_score
+        return aggregated_data
+    
+    # Extract positions and calculate disagreement
+    position_supporters = extract_positions_from_feedback(feedbacks)
+    
+    # Calculate disagreement score
+    weighted_positions = {}
+    for pos, supporters in position_supporters.items():
+        total_authority = sum(s['authority'] for s in supporters)
+        weighted_positions[pos] = total_authority
+    
+    disagreement_score = calculate_disagreement(weighted_positions)
+    
+    # Identify consensus and contention
+    consensus_areas, contention_points = identify_consensus_and_contention(feedbacks)
+    
+    # Extract reasoning patterns
+    reasoning_patterns = extract_reasoning_patterns(feedbacks)
+    
+    # Build uncertainty-aware output
     if disagreement_score > model_settings.thresholds['disagreement']:
-        # This part needs to be generalized based on the handler's output structure
-        # For now, it's a placeholder, assuming primary_answer and alternative_positions
+        # High disagreement - produce full uncertainty-preserving output
+        
+        # Find majority and minority positions
+        sorted_positions = sorted(weighted_positions.items(), key=lambda x: x[1], reverse=True)
+        primary_position = sorted_positions[0][0] if sorted_positions else None
+        
+        alternative_positions = []
+        for pos, weight in sorted_positions[1:]:
+            supporters = position_supporters[pos]
+            alternative_positions.append({
+                "position": pos,
+                "support": f"{(weight / sum(weighted_positions.values()) * 100):.1f}%",
+                "supporters": [s['username'] for s in supporters[:3]],
+                "reasoning": supporters[0]['reasoning'] if supporters else ""
+            })
+        
+        # Generate research suggestions based on contention points
+        research_suggestions = []
+        for point in contention_points[:3]:
+            research_suggestions.append(
+                f"Further investigate {point['aspect']} - "
+                f"disagreement level: {point['disagreement_level']:.2f}"
+            )
+        
         return {
             "primary_answer": aggregated_data.get("consensus_answer"),
-            "confidence_level": 1 - disagreement_score,
-            "alternative_positions": [], # This needs to be populated by handler or generalized
+            "confidence_level": round(1 - disagreement_score, 2),
+            "alternative_positions": alternative_positions,
             "expert_disagreement": {
-                "consensus_areas": [],
-                "contention_points": [],
-                "reasoning_patterns": []
+                "consensus_areas": consensus_areas,
+                "contention_points": contention_points,
+                "reasoning_patterns": reasoning_patterns
             },
             "epistemic_metadata": {
-                "uncertainty_sources": [],
-                "suggested_research": []
+                "uncertainty_sources": ["expert_disagreement", "multiple_valid_interpretations"],
+                "suggested_research": research_suggestions
+            },
+            "transparency_metrics": {
+                "evaluator_count": len(feedbacks),
+                "total_authority_weight": sum(weighted_positions.values()),
+                "disagreement_score": round(disagreement_score, 3)
             }
         }
     else:
+        # Low disagreement - return consensus output
         return {
             "consensus_answer": aggregated_data.get("consensus_answer"),
-            "confidence_level": 1 - disagreement_score,
+            "confidence_level": round(1 - disagreement_score, 2),
+            "transparency_metrics": {
+                "evaluator_count": len(feedbacks),
+                "consensus_strength": "high",
+                "disagreement_score": round(disagreement_score, 3)
+            }
         }

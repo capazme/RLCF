@@ -122,3 +122,26 @@ class BiasReport(Base):
     bias_type = Column(String) # es. "PROFESSIONAL_CLUSTERING"
     bias_score = Column(Float)
     calculated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class DevilsAdvocateAssignment(Base):
+    __tablename__ = "devils_advocate_assignments"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("legal_tasks.id"))
+    user_id = Column(Integer, ForeignKey("users.id"))
+    instructions = Column(Text)
+    assigned_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    task = relationship("LegalTask")
+    user = relationship("User")
+
+
+class AccountabilityReport(Base):
+    __tablename__ = "accountability_reports"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    cycle_start = Column(DateTime, nullable=False)
+    cycle_end = Column(DateTime, nullable=False)
+    report_data = Column(JSON, nullable=False)
+    published_at = Column(DateTime, default=datetime.datetime.utcnow)

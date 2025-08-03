@@ -1,8 +1,18 @@
 from ..models import TaskType
 from .classification_handler import ClassificationHandler
+from .qa_handler import (
+    QAHandler, SummarizationHandler, PredictionHandler, 
+    NLIHandler, NERHandler, DraftingHandler
+)
 
 HANDLER_MAP = {
     TaskType.CLASSIFICATION: ClassificationHandler,
+    TaskType.QA: QAHandler,
+    TaskType.SUMMARIZATION: SummarizationHandler,
+    TaskType.PREDICTION: PredictionHandler,
+    TaskType.NLI: NLIHandler,
+    TaskType.NER: NERHandler,
+    TaskType.DRAFTING: DraftingHandler,
 }
 
 def get_handler(db, task):

@@ -9,8 +9,8 @@ task_types:
     input_data:
       text: str
       unit: str
-    # NUOVO: Specifica quali chiavi del file originale sono ground truth
-    ground_truth_keys: ["labels"]
+    ground_truth_keys:
+    - labels
     feedback_data:
       validated_labels: List[str]
   QA:
