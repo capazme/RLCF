@@ -1,67 +1,46 @@
-# RLCF Model Configuration
-# Questo file definisce i parametri del modello matematico come descritto nel paper.
-# Modificando questo file, è possibile testare diverse teorie di scoring senza alterare il codice.
-
-# Sezione 1: Pesi del modello di autorità principale (Rif. Paper, Sez. 2.1, Eq. 1)
 authority_weights:
-  # alpha: Peso delle credenziali di base (B_u)
   baseline_credentials: 0.3
-  # beta: Peso della performance storica (T_u)
   track_record: 0.5
-  # gamma: Peso della performance recente (P_u)
   recent_performance: 0.2
-
-# Sezione 2: Parametri di evoluzione (Rif. Paper, Sez. 2.3, Eq. 3)
 track_record:
-  # Corrisponde a (1 - lambda) nel paper. lambda = 0.95
   update_factor: 0.05
-
-# Sezione 3: Soglie decisionali (Rif. Paper, Sez. 3.3)
 thresholds:
-  # tau: Soglia di disaccordo per attivare l'output con incertezza preservata
   disagreement: 0.4
-
-# Sezione 4: Regole per il calcolo delle credenziali di base (Rif. Paper, Sez. 2.2)
 baseline_credentials:
   types:
-    # Esempio di regola per Titolo di Studio
     ACADEMIC_DEGREE:
-      # w_i: Peso generale per questo tipo di credenziale
       weight: 0.3
-      # f_degree(x): Funzione di punteggio
       scoring_function:
-        type: "map"
+        type: map
         values:
           Bachelor: 1.0
           LLM: 1.1
           JD: 1.2
           PhD: 1.5
+        expression: ''
         default: 0.0
-
-    # Esempio di regola per Esperienza Professionale
     PROFESSIONAL_EXPERIENCE:
       weight: 0.4
-      # f_exp(y): Funzione di punteggio con radice quadrata per rendimenti decrescenti
       scoring_function:
-        type: "formula"
-        expression: "0.5 + 0.2 * sqrt(value)"
-
-    # Esempio di regola per Pubblicazioni
+        type: formula
+        values: {}
+        expression: 0.5 + 0.2 * sqrt(value)
+        default: 0.0
     PUBLICATION:
       weight: 0.2
-      # f_pub(z): Funzione di punteggio con cap
       scoring_function:
-        type: "formula"
-        expression: "min(0.8 + 0.1 * value, 1.4)"
-
-    # Esempio di regola per Ruolo Istituzionale
+        type: formula
+        values: {}
+        expression: min(0.8 + 0.1 * value, 1.4)
+        default: 0.0
     INSTITUTIONAL_ROLE:
       weight: 0.1
-      # f_role(r): Funzione di punteggio
       scoring_function:
-        type: "map"
+        type: map
         values:
           Junior: 0.7
           Senior: 1.1
           Partner: 1.4
           default: 0.0
+        expression: ''
+        default: 0.0

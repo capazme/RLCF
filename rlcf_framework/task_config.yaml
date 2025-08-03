@@ -1,0 +1,45 @@
+task_types:
+  SUMMARIZATION:
+    input_data:
+      document: str
+    feedback_data:
+      revised_summary: str
+      rating: Literal["good", "bad"]
+  CLASSIFICATION:
+    input_data:
+      text: str
+      unit: str
+    # NUOVO: Specifica quali chiavi del file originale sono ground truth
+    ground_truth_keys: ["labels"]
+    feedback_data:
+      validated_labels: List[str]
+  QA:
+    input_data:
+      context: str
+      question: str
+    feedback_data:
+      validated_answer: str
+      position: Literal["correct", "incorrect"]
+  PREDICTION:
+    input_data:
+      facts: str
+    feedback_data:
+      chosen_outcome: Literal["violation", "no_violation"]
+  NLI:
+    input_data:
+      premise: str
+      hypothesis: str
+    feedback_data:
+      chosen_label: Literal["entail", "contradict", "neutral"]
+  NER:
+    input_data:
+      tokens: List[str]
+    feedback_data:
+      validated_tags: List[str]
+  DRAFTING:
+    input_data:
+      source: str
+      instruction: str
+    feedback_data:
+      revised_target: str
+      rating: Literal["better", "worse"]

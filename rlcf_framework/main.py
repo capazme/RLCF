@@ -1,11 +1,12 @@
 from fastapi import FastAPI, Depends, HTTPException, Security
 from fastapi.security import APIKeyHeader
-from pydantic import ValidationError
+from pydantic import ValidationError, create_model
+from typing import List
 from sqlalchemy.orm import Session
 from . import models, schemas, authority_module, aggregation_engine, post_processing, bias_analysis, services
 from .models import TaskStatus, TaskType # Import TaskType Enum
 
-from .config import ModelConfig, load_model_config, model_settings
+from .config import ModelConfig, load_model_config, model_settings, TaskConfig, load_task_config, task_settings
 import yaml
 from .database import SessionLocal, engine
 import os
@@ -60,6 +61,30 @@ def update_model_config(config: ModelConfig, api_key: str = Depends(get_api_key)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write or reload config: {e}")
 
+@app.get("/config/tasks", response_model=TaskConfig, tags=["Admin & Config"])
+def get_task_config():
+    """Restituisce la configurazione dei task attualmente in uso dal file YAML."""
+    return task_settings
+
+@app.put("/config/tasks", response_model=TaskConfig, tags=["Admin & Config"])
+def update_task_config(config: TaskConfig, api_key: str = Depends(get_api_key)):
+    """
+    Aggiorna il file di configurazione dei task (richiede API Key).
+    Questa operazione sovrascrive task_config.yaml e ricarica la configurazione
+    per tutti i processi successivi senza riavviare il server.
+    """
+    try:
+        with open("rlcf_framework/task_config.yaml", "w") as f:
+            yaml.dump(config.dict(), f, sort_keys=False, indent=2)
+        
+        # Ricarica la configurazione globale per renderla subito attiva
+        global task_settings
+        task_settings = load_task_config()
+        
+        return task_settings
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write or reload config: {e}")
+
 @app.post("/users/", response_model=schemas.User, tags=["Users"])
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     db_user = models.User(username=user.username)
@@ -99,6 +124,73 @@ def create_legal_task(task: schemas.LegalTaskCreate, db: Session = Depends(get_d
     db.refresh(db_task)
 
     return db_task
+
+@app.post("/tasks/batch_from_yaml/", response_model=List[schemas.LegalTask], tags=["Tasks"])
+def create_legal_tasks_from_yaml(
+    yaml_content: str,
+    db: Session = Depends(get_db),
+    api_key: str = Depends(get_api_key) # Richiede API Key per sicurezza
+):
+    """
+    Crea uno o più task legali da un contenuto YAML fornito.
+    Il YAML deve contenere una lista di task, ognuno con 'task_type' e 'input_data'.
+    """
+    try:
+        data = yaml.safe_load(yaml_content)
+        tasks_data = schemas.TaskListFromYaml(tasks=data.get("tasks", [])).tasks
+    except (yaml.YAMLError, ValidationError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid YAML or data format: {e}")
+
+    created_tasks = []
+    for task_data in tasks_data:
+        try:
+            # Validate input_data using the existing LegalTaskCreate schema's validator
+            validated_task_data = schemas.LegalTaskCreate(
+                task_type=task_data.task_type,
+                input_data=task_data.input_data
+            )
+
+            # Separate input_data and ground_truth_data based on task_config
+            task_type_enum = TaskType(task_data.task_type)
+            task_type_config = task_settings.task_types.get(task_type_enum.value)
+
+            input_data_for_db = {}
+            ground_truth_data_for_db = {}
+
+            if task_type_config and task_type_config.ground_truth_keys:
+                for key, value in task_data.input_data.items():
+                    if key in task_type_config.ground_truth_keys:
+                        ground_truth_data_for_db[key] = value
+                    else:
+                        input_data_for_db[key] = value
+            else:
+                input_data_for_db = task_data.input_data # If no ground_truth_keys, all is input
+
+            db_task = models.LegalTask(
+                task_type=validated_task_data.task_type.value,
+                input_data=input_data_for_db,
+                ground_truth_data=ground_truth_data_for_db if ground_truth_data_for_db else None
+            )
+            db.add(db_task)
+            db.flush() # Flush to get the task ID before creating response
+
+            # Create a dummy response with flexible output_data
+            dummy_output_data = {"message": "AI response placeholder for " + db_task.task_type}
+            db_response = models.Response(task_id=db_task.id, output_data=dummy_output_data, model_version="dummy-0.1")
+            db.add(db_response)
+            db_task.status = models.TaskStatus.BLIND_EVALUATION.value # Imposta lo stato iniziale per la valutazione
+
+            db.refresh(db_task)
+            created_tasks.append(db_task)
+        except ValidationError as e:
+            db.rollback() # Rollback any partial changes for this task
+            raise HTTPException(status_code=422, detail=f"Validation error for a task: {e}")
+        except Exception as e:
+            db.rollback() # Rollback any partial changes for this task
+            raise HTTPException(status_code=500, detail=f"Error processing task: {e}")
+
+    db.commit()
+    return created_tasks
 
 # --- New GET Endpoints for Database Viewer ---
 @app.get("/users/all", response_model=list[schemas.User], tags=["Database Viewer"])
@@ -147,21 +239,19 @@ def submit_feedback(response_id: int, feedback: schemas.FeedbackCreate, db: Sess
     db.refresh(db_feedback)
 
     # Dynamic validation of feedback_data based on task_type
-    task_type = db_response.task.task_type
-    feedback_data_schema_map = {
-        TaskType.SUMMARIZATION: schemas.SummarizationFeedbackData,
-        TaskType.CLASSIFICATION: schemas.ClassificationFeedbackData,
-        TaskType.QA: schemas.QAFeedbackData,
-        TaskType.PREDICTION: schemas.PredictionFeedbackData,
-        TaskType.NLI: schemas.NLIFeedbackData,
-        TaskType.NER: schemas.NERFeedbackData,
-        TaskType.DRAFTING: schemas.DraftingFeedbackData,
-    }
-    if task_type in feedback_data_schema_map:
+    task_type_enum = TaskType(db_response.task.task_type)
+    feedback_schema_def = task_settings.task_types.get(task_type_enum.value)
+
+    if feedback_schema_def and feedback_schema_def.feedback_data:
+        fields = {
+            field_name: (schemas._parse_type_string(type_str), ...)
+            for field_name, type_str in feedback_schema_def.feedback_data.items()
+        }
+        DynamicFeedbackModel = create_model(f'{task_type_enum.value}FeedbackData', **fields)
         try:
-            feedback_data_schema_map[task_type].model_validate(feedback.feedback_data)
+            DynamicFeedbackModel.model_validate(feedback.feedback_data)
         except ValidationError as e:
-            raise HTTPException(status_code=422, detail=f"Invalid feedback_data for task_type {task_type}: {e}")
+            raise HTTPException(status_code=422, detail=f"Invalid feedback_data for task_type {task_type_enum.value}: {e}")
 
     quality_score = authority_module.calculate_quality_score(db, db_feedback)
     authority_module.update_track_record(db, feedback.user_id, quality_score)

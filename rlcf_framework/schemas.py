@@ -1,69 +1,35 @@
-from pydantic import BaseModel, Field, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, Field, ConfigDict, ValidationError, model_validator, create_model
 from typing import List, Optional, Dict, Any, Literal, Union
 from typing_extensions import Annotated # For Pydantic v2 discriminated unions
 import datetime
 
 from .models import TaskType # Import TaskType Enum
+from .config import task_settings # Import the new task_settings
 
-# --- Task-Specific Schemas for Flexible Data ---
+# Helper function to convert string type hints from YAML to actual Python types
+def _parse_type_string(type_str: str):
+    if type_str == "str":
+        return str
+    elif type_str == "int":
+        return int
+    elif type_str == "float":
+        return float
+    elif type_str.startswith("List["):
+        inner_type_str = type_str[len("List["):-1]
+        return List[_parse_type_string(inner_type_str)]
+    elif type_str.startswith("Literal["):
+        values_str = type_str[len("Literal["):-1]
+        values = [val.strip().strip('\'"') for val in values_str.split(',')]
+        return Literal[tuple(values)]
+    # Add more types as needed
+    return Any # Fallback
 
-# SUMMARIZATION Task
-class SummarizationTaskInput(BaseModel):
-    document: str
+class TaskCreateFromYaml(BaseModel):
+    task_type: str
+    input_data: Any # Use Any for flexible JSON data
 
-class SummarizationFeedbackData(BaseModel):
-    revised_summary: str
-    rating: Literal["good", "bad"]
-
-# CLASSIFICATION Task
-class ClassificationTaskInput(BaseModel):
-    text: str
-    unit: str
-
-class ClassificationFeedbackData(BaseModel):
-    validated_labels: List[str]
-
-# QA Task
-class QATaskInput(BaseModel):
-    context: str
-    question: str
-
-class QAFeedbackData(BaseModel):
-    validated_answer: str
-    position: Literal["correct", "incorrect"]
-
-# PREDICTION Task
-class PredictionTaskInput(BaseModel):
-    facts: str
-
-class PredictionFeedbackData(BaseModel):
-    chosen_outcome: Literal["violation", "no_violation"]
-
-# NLI Task
-class NLITaskInput(BaseModel):
-    premise: str
-    hypothesis: str
-
-class NLIFeedbackData(BaseModel):
-    chosen_label: Literal["entail", "contradict", "neutral"]
-
-# NER Task
-class NERTaskInput(BaseModel):
-    tokens: List[str]
-
-class NERFeedbackData(BaseModel):
-    validated_tags: List[str]
-
-# DRAFTING Task
-class DraftingTaskInput(BaseModel):
-    source: str
-    instruction: str
-
-class DraftingFeedbackData(BaseModel):
-    revised_target: str
-    rating: Literal["better", "worse"]
-
-# --- End Task-Specific Schemas ---
+class TaskListFromYaml(BaseModel):
+    tasks: List[TaskCreateFromYaml]
 
 class CredentialBase(BaseModel):
     type: str
@@ -96,7 +62,6 @@ class User(UserBase):
 
 # Moved Response and Feedback related schemas here to resolve forward reference
 class ResponseBase(BaseModel):
-    # response_text: str # Removed, now part of output_data
     output_data: Dict[str, Any] # Flexible output data
     model_version: str
 
@@ -144,23 +109,25 @@ class LegalTaskCreate(LegalTaskBase):
     @classmethod
     def validate_input_data(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            task_type = data.get('task_type')
+            task_type_str = data.get('task_type')
             input_data = data.get('input_data')
-            if task_type and input_data:
-                schema_map = {
-                    TaskType.SUMMARIZATION: SummarizationTaskInput,
-                    TaskType.CLASSIFICATION: ClassificationTaskInput,
-                    TaskType.QA: QATaskInput,
-                    TaskType.PREDICTION: PredictionTaskInput,
-                    TaskType.NLI: NLITaskInput,
-                    TaskType.NER: NERTaskInput,
-                    TaskType.DRAFTING: DraftingTaskInput,
-                }
-                if task_type in schema_map:
+            
+            if task_type_str and input_data:
+                task_type_enum = TaskType(task_type_str)
+                task_schema_def = task_settings.task_types.get(task_type_enum.value)
+                
+                if task_schema_def and task_schema_def.input_data:
+                    # Dynamically create a Pydantic model for input_data
+                    fields = {
+                        field_name: (_parse_type_string(type_str), ...)
+                        for field_name, type_str in task_schema_def.input_data.items()
+                    }
+                    DynamicInputModel = create_model(f'{task_type_enum.value}Input', **fields)
+                    
                     try:
-                        schema_map[task_type].model_validate(input_data)
+                        DynamicInputModel.model_validate(input_data)
                     except ValidationError as e:
-                        raise ValueError(f"Invalid input_data for task_type {task_type}: {e}")
+                        raise ValueError(f"Invalid input_data for task_type {task_type_str}: {e}")
         return data
 
 class LegalTask(LegalTaskBase):

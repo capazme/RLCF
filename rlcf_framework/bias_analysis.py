@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from . import models
 from collections import Counter
+import numpy as np
 
 def calculate_professional_clustering_bias(db: Session, user_id: int, task_id: int) -> float:
     """
@@ -36,3 +37,30 @@ def calculate_professional_clustering_bias(db: Session, user_id: int, task_id: i
     # 5. Calcola il bias
     bias_score = 0.0 if user_feedback.position == group_consensus_position else 1.0
     return bias_score
+
+def calculate_authority_correctness_correlation(db: Session) -> float:
+    """
+    Calcola la correlazione di Pearson tra il punteggio di autorità degli utenti
+    e i loro punteggi di correttezza aggregati.
+    """
+    users = db.query(models.User).all()
+    authority_scores = []
+    correctness_scores = []
+
+    for user in users:
+        user_feedbacks = db.query(models.Feedback).filter(models.Feedback.user_id == user.id).all()
+        if not user_feedbacks: continue
+
+        # Aggregate correctness scores for the user
+        total_correctness = sum([fb.correctness_score for fb in user_feedbacks if fb.correctness_score is not None])
+        num_correctness_scores = len([fb for fb in user_feedbacks if fb.correctness_score is not None])
+
+        if num_correctness_scores > 0:
+            avg_correctness = total_correctness / num_correctness_scores
+            authority_scores.append(user.authority_score)
+            correctness_scores.append(avg_correctness)
+
+    if len(authority_scores) < 2: # Need at least two data points for correlation
+        return 0.0
+
+    return np.corrcoef(authority_scores, correctness_scores)[0, 1]

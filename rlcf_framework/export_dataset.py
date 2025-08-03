@@ -17,100 +17,66 @@ def get_db():
 
 def format_sft_summarization(task: models.LegalTask, response: models.Response, feedback: models.Feedback) -> dict:
     # SFT for summarization: Instruction + Document -> Revised Summary
-    if not task.input_data or "document" not in task.input_data:
-        return None
-    if not feedback.feedback_data or "revised_summary" not in feedback.feedback_data:
-        return None
-    
+    # Assumes input_data and feedback_data are already validated by schemas
     instruction = "Summarize the following document accurately and concisely."
     return {
         "instruction": instruction,
-        "input": task.input_data["document"],
-        "output": feedback.feedback_data["revised_summary"]
+        "input": task.input_data.get("document"),
+        "output": feedback.feedback_data.get("revised_summary")
     }
 
 def format_sft_classification(task: models.LegalTask, response: models.Response, feedback: models.Feedback) -> dict:
     # SFT for classification: Text + Unit -> Validated Labels
-    if not task.input_data or "text" not in task.input_data or "unit" not in task.input_data:
-        return None
-    if not feedback.feedback_data or "validated_labels" not in feedback.feedback_data:
-        return None
-    
-    instruction = f"Classify the following text unit: {task.input_data["unit"]}"
+    instruction = f"Classify the following text unit: {task.input_data.get("unit")}"
     return {
         "instruction": instruction,
-        "input": task.input_data["text"],
-        "output": ", ".join(feedback.feedback_data["validated_labels"])
+        "input": task.input_data.get("text"),
+        "output": ", ".join(feedback.feedback_data.get("validated_labels", []))
     }
 
 def format_sft_qa(task: models.LegalTask, response: models.Response, feedback: models.Feedback) -> dict:
     # SFT for QA: Context + Question -> Validated Answer
-    if not task.input_data or "context" not in task.input_data or "question" not in task.input_data:
-        return None
-    if not feedback.feedback_data or "validated_answer" not in feedback.feedback_data:
-        return None
-    
-    instruction = f"Answer the following question based on the provided context: {task.input_data["question"]}"
+    instruction = f"Answer the following question based on the provided context: {task.input_data.get("question")}"
     return {
         "instruction": instruction,
-        "input": task.input_data["context"],
-        "output": feedback.feedback_data["validated_answer"]
+        "input": task.input_data.get("context"),
+        "output": feedback.feedback_data.get("validated_answer")
     }
 
 def format_sft_prediction(task: models.LegalTask, response: models.Response, feedback: models.Feedback) -> dict:
     # SFT for Prediction: Facts -> Chosen Outcome
-    if not task.input_data or "facts" not in task.input_data:
-        return None
-    if not feedback.feedback_data or "chosen_outcome" not in feedback.feedback_data:
-        return None
-    
     instruction = "Predict the outcome based on the given facts."
     return {
         "instruction": instruction,
-        "input": task.input_data["facts"],
-        "output": feedback.feedback_data["chosen_outcome"]
+        "input": task.input_data.get("facts"),
+        "output": feedback.feedback_data.get("chosen_outcome")
     }
 
 def format_sft_nli(task: models.LegalTask, response: models.Response, feedback: models.Feedback) -> dict:
     # SFT for NLI: Premise + Hypothesis -> Chosen Label
-    if not task.input_data or "premise" not in task.input_data or "hypothesis" not in task.input_data:
-        return None
-    if not feedback.feedback_data or "chosen_label" not in feedback.feedback_data:
-        return None
-    
-    instruction = f"Determine the relationship between the premise and hypothesis (entailment, contradiction, or neutral). Premise: {task.input_data["premise"]}"
+    instruction = f"Determine the relationship between the premise and hypothesis (entailment, contradiction, or neutral). Premise: {task.input_data.get("premise")}"
     return {
         "instruction": instruction,
-        "input": task.input_data["hypothesis"],
-        "output": feedback.feedback_data["chosen_label"]
+        "input": task.input_data.get("hypothesis"),
+        "output": feedback.feedback_data.get("chosen_label")
     }
 
 def format_sft_ner(task: models.LegalTask, response: models.Response, feedback: models.Feedback) -> dict:
     # SFT for NER: Tokens -> Validated Tags
-    if not task.input_data or "tokens" not in task.input_data:
-        return None
-    if not feedback.feedback_data or "validated_tags" not in feedback.feedback_data:
-        return None
-    
     instruction = "Identify and tag named entities in the following sequence of tokens."
     return {
         "instruction": instruction,
-        "input": " ".join(task.input_data["tokens"]),
-        "output": " ".join(feedback.feedback_data["validated_tags"])
+        "input": " ".join(task.input_data.get("tokens", [])),
+        "output": " ".join(feedback.feedback_data.get("validated_tags", []))
     }
 
 def format_sft_drafting(task: models.LegalTask, response: models.Response, feedback: models.Feedback) -> dict:
     # SFT for Drafting: Source + Instruction -> Revised Target
-    if not task.input_data or "source" not in task.input_data or "instruction" not in task.input_data:
-        return None
-    if not feedback.feedback_data or "revised_target" not in feedback.feedback_data:
-        return None
-    
-    instruction = f"Revise the following text based on the instruction: {task.input_data["instruction"]}"
+    instruction = f"Revise the following text based on the instruction: {task.input_data.get("instruction")}"
     return {
         "instruction": instruction,
-        "input": task.input_data["source"],
-        "output": feedback.feedback_data["revised_target"]
+        "input": task.input_data.get("source"),
+        "output": feedback.feedback_data.get("revised_target")
     }
 
 SFT_FORMATTERS = {
@@ -127,23 +93,19 @@ SFT_FORMATTERS = {
 
 def format_preference_drafting(task: models.LegalTask, response: models.Response, feedback: models.Feedback) -> dict:
     # Preference for drafting: Source + Instruction -> Chosen (revised_target) vs Rejected (original target)
-    if not task.input_data or "source" not in task.input_data or "instruction" not in task.input_data:
-        return None
-    if not feedback.feedback_data or "revised_target" not in feedback.feedback_data or "rating" not in feedback.feedback_data:
-        return None
-    
-    # Assuming original target is in response.output_data["target"]
+    # Assumes input_data and feedback_data are already validated by schemas
     original_target = response.output_data.get("target")
     if not original_target:
         return None
 
-    prompt = f"Revise the following text based on the instruction: {task.input_data["instruction"]}\nSource: {task.input_data["source"]}"
+    prompt = f"Revise the following text based on the instruction: {task.input_data.get("instruction")}\nSource: {task.input_data.get("source")}"
     
-    if feedback.feedback_data["rating"] == "better":
-        return {"prompt": prompt, "chosen": feedback.feedback_data["revised_target"], "rejected": original_target}
-    elif feedback.feedback_data["rating"] == "worse":
-        return {"prompt": prompt, "chosen": original_target, "rejected": feedback.feedback_data["revised_target"]}
+    if feedback.feedback_data.get("rating") == "better":
+        return {"prompt": prompt, "chosen": feedback.feedback_data.get("revised_target"), "rejected": original_target}
+    elif feedback.feedback_data.get("rating") == "worse":
+        return {"prompt": prompt, "chosen": original_target, "rejected": feedback.feedback_data.get("revised_target")}
     return None
+
 
 # Add more preference formatters as needed
 PREFERENCE_FORMATTERS = {

@@ -14,7 +14,10 @@ def orchestrate_task_aggregation(db: Session, task_id: int):
     # 2. Calcola e salva il punteggio di coerenza per ogni feedback
     post_processing.calculate_and_store_consistency(db, task_id, result)
 
-    # 3. Calcola e salva il bias per ogni partecipante
+    # 3. Calcola e salva il punteggio di correttezza per ogni feedback (se ground truth disponibile)
+    post_processing.calculate_and_store_correctness(db, task_id)
+
+    # 4. Calcola e salva il bias per ogni partecipante
     participants = db.query(models.User).join(models.Feedback).join(models.Response).filter(models.Response.task_id == task_id).distinct().all()
     
     for user in participants:

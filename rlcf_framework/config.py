@@ -1,6 +1,7 @@
 import yaml
 from pydantic import BaseModel, Field
-from typing import Dict, Any, Literal
+from typing import Dict, Any, Literal, List
+import os
 
 # Modelli Pydantic per validare la struttura del file YAML
 class ScoringFunction(BaseModel):
@@ -22,14 +23,32 @@ class ModelConfig(BaseModel):
     thresholds: Dict[str, float]
     baseline_credentials: BaselineCredentialsConfig
 
+class TaskSchemaDefinition(BaseModel):
+    # Using Any for now, will be parsed into actual types later
+    # This represents the structure like {"field_name": "str", "another_field": "List[int]"}
+    input_data: Dict[str, str]
+    feedback_data: Dict[str, str]
+
+class TaskConfig(BaseModel):
+    task_types: Dict[str, TaskSchemaDefinition]
+
 def load_model_config() -> ModelConfig:
     """Carica, valida e restituisce la configurazione del modello dal file YAML."""
-    with open("rlcf_framework/model_config.yaml", "r") as f:
+    config_path = os.path.join(os.path.dirname(__file__), "model_config.yaml")
+    with open(config_path, "r") as f:
         config_data = yaml.safe_load(f)
     return ModelConfig(**config_data)
 
+def load_task_config() -> TaskConfig:
+    """Carica, valida e restituisce la configurazione dei task dal file YAML."""
+    config_path = os.path.join(os.path.dirname(__file__), "task_config.yaml")
+    with open(config_path, "r") as f:
+        config_data = yaml.safe_load(f)
+    return TaskConfig(**config_data)
+
 # Istanza globale della configurazione caricata
 model_settings = load_model_config()
+task_settings = load_task_config()
 
 # Manteniamo le impostazioni dell'app separate
 class AppSettings(BaseModel):

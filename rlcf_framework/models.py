@@ -61,6 +61,7 @@ class LegalTask(Base):
     id = Column(Integer, primary_key=True, index=True)
     task_type = Column(String, nullable=False) # New: Type of task
     input_data = Column(JSON, nullable=False) # New: Flexible input data
+    ground_truth_data = Column(JSON, nullable=True) # Nuovo campo!
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     status = Column(String, default=TaskStatus.OPEN)
 
@@ -94,6 +95,7 @@ class Feedback(Base):
     feedback_data = Column(JSON, nullable=False) # New: Flexible feedback data
     community_helpfulness_rating = Column(Integer, default=0)
     consistency_score = Column(Float, nullable=True)
+    correctness_score = Column(Float, nullable=True) # Nuovo campo per il ground truth
     submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     author = relationship("User", back_populates="feedback")
