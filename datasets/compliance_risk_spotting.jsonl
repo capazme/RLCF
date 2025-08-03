@@ -1,0 +1,2 @@
+{"id": "tos_145", "text": "We may change these terms at any time without notifying you.", "risk_labels": ["unilateral_change"], "severity": 3}
+{"id": "privacy_789", "text": "We collect precise geolocation data even when the app is closed.", "risk_labels": ["excessive_data_collection"], "severity": 2}

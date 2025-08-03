@@ -1,0 +1,1 @@
+{"id": "doc_001", "tokens": ["John", "Doe", "filed", "suit", "against", "Acme", "Corp", ".", "The", "hearing", "is", "set", "for", "12", "July", "2025", "."], "tags": ["B-PARTY", "I-PARTY", "O", "O", "O", "B-PARTY", "I-PARTY", "O", "O", "O", "O", "O", "O", "B-DATE", "I-DATE", "I-DATE", "O"]}

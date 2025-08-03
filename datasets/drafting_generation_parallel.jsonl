@@ -1,0 +1,2 @@
+{"id": "rewrite_001", "source": "Supplier shall deliver the goods within 20 days of purchase order.", "target": "The Supplier agrees to deliver the goods no later than twenty (20) days after receiving the Purchase Order.", "task": "rewrite-clarity"}
+{"id": "rewrite_002", "source": "This Agreement shall be governed by the laws of Wonderland.", "target": "This Agreement shall be governed by and construed in accordance with the laws of the State of New York, without regard to its conflict‑of‑law rules.", "task": "jurisdiction-change"}

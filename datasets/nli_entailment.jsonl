@@ -1,0 +1,2 @@
+{"premise": "This Agreement shall terminate automatically if either party enters bankruptcy proceedings.", "hypothesis": "If the supplier becomes insolvent, the agreement ends.", "label": "entail"}
+{"premise": "Tenant may not sublet the premises without prior written consent of Landlord.", "hypothesis": "Tenant is free to sublet without permission.", "label": "contradict"}
