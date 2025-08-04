@@ -13,33 +13,47 @@ task_types:
     - labels
     feedback_data:
       validated_labels: List[str]
+      reasoning: str
   QA:
     input_data:
       context: str
       question: str
+    ground_truth_keys:
+    - answers
     feedback_data:
       validated_answer: str
       position: Literal["correct", "incorrect"]
+      reasoning: str
   PREDICTION:
     input_data:
       facts: str
+    ground_truth_keys:
+    - outcome
     feedback_data:
       chosen_outcome: Literal["violation", "no_violation"]
+      reasoning: str
   NLI:
     input_data:
       premise: str
       hypothesis: str
     feedback_data:
       chosen_label: Literal["entail", "contradict", "neutral"]
+      reasoning: str
   NER:
     input_data:
       tokens: List[str]
+    ground_truth_keys:
+    - tags
     feedback_data:
       validated_tags: List[str]
+      reasoning: str
   DRAFTING:
     input_data:
       source: str
-      instruction: str
+      task: str
+    ground_truth_keys:
+    - target
     feedback_data:
       revised_target: str
       rating: Literal["better", "worse"]
+      reasoning: str

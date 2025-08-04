@@ -2,6 +2,8 @@ import gradio as gr
 import yaml
 from sqlalchemy.orm import Session
 from typing import Dict, Any
+import requests
+import os
 
 # --- Importazioni dal tuo RLCF Framework ---
 # Assicurati che il framework sia installabile o nel PYTHONPATH
@@ -133,9 +135,26 @@ def create_task_from_yaml(yaml_content: str):
 
     created_tasks_info = []
     for task_data in tasks_data:
+        # Applica ground truth separation
+        task_type_enum = TaskType(task_data.task_type)
+        task_type_config = task_settings.task_types.get(task_type_enum.value)
+        
+        input_data_for_db = {}
+        ground_truth_data_for_db = {}
+        
+        if task_type_config and hasattr(task_type_config, 'ground_truth_keys') and task_type_config.ground_truth_keys:
+            for key, value in task_data.input_data.items():
+                if key in task_type_config.ground_truth_keys:
+                    ground_truth_data_for_db[key] = value
+                else:
+                    input_data_for_db[key] = value
+        else:
+            input_data_for_db = task_data.input_data
+        
         db_task = models.LegalTask(
             task_type=task_data.task_type,
-            input_data=task_data.input_data
+            input_data=input_data_for_db,
+            ground_truth_data=ground_truth_data_for_db if ground_truth_data_for_db else None
         )
         db.add(db_task)
         db.commit()
@@ -143,6 +162,172 @@ def create_task_from_yaml(yaml_content: str):
         created_tasks_info.append(f"Task ID {db_task.id} ({db_task.task_type}) creato.")
 
     return "\n".join(created_tasks_info), get_all_db_tasks()
+
+def load_dataset_file(file_path: str, task_type: str):
+    """Carica un file dataset JSONL e crea task nel database."""
+    if not file_path.startswith("/Users/gpuzio/Desktop/ALIS/RLCF/datasets/"):
+        return "Errore: Path non valido"
+    
+    db: Session = next(get_db())
+    created_tasks = []
+    
+    try:
+        import json
+        
+        task_type_enum = TaskType(task_type)
+        task_type_config = task_settings.task_types.get(task_type_enum.value)
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                if not line.strip():
+                    continue
+                
+                try:
+                    data = json.loads(line)
+                    
+                    # Separazione ground truth
+                    input_data_for_db = {}
+                    ground_truth_data_for_db = {}
+                    
+                    if task_type_config and hasattr(task_type_config, 'ground_truth_keys') and task_type_config.ground_truth_keys:
+                        for key, value in data.items():
+                            if key in task_type_config.ground_truth_keys:
+                                ground_truth_data_for_db[key] = value
+                            elif key != 'id':  # Escludiamo ID dai dati del task
+                                input_data_for_db[key] = value
+                    else:
+                        # Se non ci sono ground truth keys, tutti i dati (eccetto ID) vanno in input
+                        input_data_for_db = {k: v for k, v in data.items() if k != 'id'}
+                    
+                    # Crea il task
+                    db_task = models.LegalTask(
+                        task_type=task_type,
+                        input_data=input_data_for_db,
+                        ground_truth_data=ground_truth_data_for_db if ground_truth_data_for_db else None
+                    )
+                    db.add(db_task)
+                    db.flush()  # Flush per ottenere l'ID
+                    
+                    # Crea response placeholder
+                    dummy_output_data = {"message": f"AI response placeholder for {task_type}"}
+                    db_response = models.Response(
+                        task_id=db_task.id, 
+                        output_data=dummy_output_data, 
+                        model_version="dummy-0.1"
+                    )
+                    db.add(db_response)
+                    db_task.status = models.TaskStatus.BLIND_EVALUATION.value
+                    
+                    created_tasks.append(db_task.id)
+                    
+                except json.JSONDecodeError as e:
+                    return f"Errore JSON alla riga {line_num}: {e}"
+                except Exception as e:
+                    return f"Errore alla riga {line_num}: {e}"
+        
+        db.commit()
+        return f"✅ Caricati {len(created_tasks)} task dal file {file_path.split('/')[-1]}"
+        
+    except FileNotFoundError:
+        return f"Errore: File {file_path} non trovato"
+    except Exception as e:
+        db.rollback()
+        return f"Errore durante il caricamento: {e}"
+
+import requests
+import os
+
+def generate_ai_response_for_task(task_id: int, model_type: str, model_identifier: str, api_key: str = None):
+    """Genera una risposta AI realistica per un task utilizzando modelli configurati."""
+    db: Session = next(get_db())
+    
+    task = db.query(models.LegalTask).filter(models.LegalTask.id == task_id).first()
+    if not task:
+        return "Task non trovato"
+
+    response_data = {}
+    try:
+        if model_type == "OpenRouter":
+            if not api_key:
+                return "Errore: Chiave API OpenRouter non fornita."
+            
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": model_identifier,
+                "messages": [
+                    {"role": "system", "content": f"You are an AI specialized in legal tasks. The user will provide a legal task of type {task.task_type} and its input data. Provide a concise and accurate response in JSON format."},
+                    {"role": "user", "content": f"Task Type: {task.task_type}\nInput Data: {json.dumps(task.input_data)}"}
+                ]
+            }
+            
+            openrouter_url = "https://openrouter.ai/api/v1/chat/completions"
+            res = requests.post(openrouter_url, headers=headers, json=payload)
+            res.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+            
+            ai_output = res.json()
+            raw_content = ai_output['choices'][0]['message']['content']
+            try:
+                response_data = json.loads(raw_content)
+            except json.JSONDecodeError:
+                response_data = {"raw_output": raw_content, "error": "Model output was not valid JSON."}
+
+        elif model_type == "Local":
+            # Simulazione per modelli locali. model_identifier sarà il percorso/endpoint.
+            if task.task_type == "CLASSIFICATION":
+                response_data = {
+                    "predicted_labels": ["contract_breach", "negligence"],
+                    "confidence": 0.85,
+                    "explanation": f"Local model simulation ({model_identifier}) for classification based on: {task.input_data.get('text', 'N/A')}"
+                }
+            elif task.task_type == "QA":
+                response_data = {
+                    "answer": "The simulated local model states the statute of limitations is 3 years.",
+                    "sources": ["Simulated Source 1", "Simulated Source 2"],
+                    "confidence": 0.90
+                }
+            elif task.task_type == "SUMMARIZATION":
+                response_data = {
+                    "summary": "This is a simulated summary from a local model.",
+                    "key_points": ["Simulated point 1", "Simulated point 2"],
+                    "length": len(task.input_data.get('text', '')) // 2 if 'text' in task.input_data else 50
+                }
+            elif task.task_type == "PREDICTION":
+                response_data = {
+                    "predicted_outcome": "violation",
+                    "probability": 0.75,
+                    "key_factors": ["Simulated factor A", "Simulated factor B"]
+                }
+            else:
+                response_data = {"message": f"Simulated local response for {task.task_type} task with model {model_identifier}"}
+        else:
+            return f"Errore: Tipo di modello '{model_type}' non supportato."
+
+    except requests.exceptions.RequestException as e:
+        return f"Errore di rete/API con OpenRouter per {model_identifier}: {e}"
+    except Exception as e:
+        return f"Errore durante la generazione della risposta AI per {model_identifier}: {e}"
+
+    # Aggiorna la response esistente o creane una nuova
+    response = db.query(models.Response).filter(
+        models.Response.task_id == task_id
+    ).first()
+    
+    if not response:
+        response = models.Response(
+            task_id=task_id,
+            model_version=model_identifier,
+            output_data=response_data
+        )
+        db.add(response)
+    else:
+        response.output_data = response_data
+        response.model_version = model_name
+    
+    db.commit()
+    return f"✅ Risposta AI generata per task {task_id} usando {model_name}"
 
 # --- Sezione Data Viewer ---
 def get_all_db_tasks():
@@ -459,9 +644,19 @@ with gr.Blocks(theme=gr.themes.Soft(), title="RLCF Management UI") as demo:
         with gr.TabItem("📝 Gestione Task e Feedback"):
             gr.Markdown("## Creazione di Task e Invio di Feedback")
             with gr.Accordion("Carica Task da YAML", open=True):
-                 yaml_editor = gr.Code(label="Contenuto YAML", language="yaml", lines=15, value="tasks:\n  - task_type: CLASSIFICATION\n    input_data:\n      text: '...'")
+                 yaml_editor = gr.Code(label="Contenuto YAML", language="yaml", lines=15, value="tasks:\n  - task_type: CLASSIFICATION\n    input_data:\n      text: '...' ")
                  upload_yaml_btn = gr.Button("Crea Task da YAML")
                  yaml_upload_status = gr.Textbox(label="Stato Creazione")
+
+            with gr.Accordion("Genera Risposta AI per Task", open=True):
+                with gr.Row():
+                    ai_task_id = gr.Number(label="ID Task", precision=0)
+                    ai_model_type = gr.Radio(label="Tipo Modello", choices=["OpenRouter", "Local"], value="OpenRouter")
+                with gr.Row():
+                    ai_openrouter_api_key = gr.Textbox(label="OpenRouter API Key (se OpenRouter)", type="password", interactive=True)
+                    ai_model_identifier = gr.Textbox(label="Nome Modello (OpenRouter) / Percorso (Locale)", value="gpt-3.5-turbo")
+                generate_ai_response_btn = gr.Button("Genera Risposta AI")
+                ai_response_status = gr.Textbox(label="Stato Generazione Risposta AI")
 
         # --- TAB 5: Data Viewer ---
         with gr.TabItem("🔍 Visualizzatore Database"):
@@ -556,6 +751,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="RLCF Management UI") as demo:
 
     # Tasks
     upload_yaml_btn.click(create_task_from_yaml, inputs=yaml_editor, outputs=[yaml_upload_status, tasks_df])
+    generate_ai_response_btn.click(generate_ai_response_for_task, inputs=[ai_task_id, ai_model_type, ai_model_identifier, ai_openrouter_api_key], outputs=ai_response_status)
 
     # Analysis
     get_res_btn.click(get_aggregated_result, inputs=res_task_id, outputs=result_output)

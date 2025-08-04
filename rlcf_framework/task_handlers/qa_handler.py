@@ -2,7 +2,6 @@ from .base import BaseTaskHandler
 from typing import Dict, Any, List
 from .. import models
 import numpy as np
-from collections import Counter
 
 class QAHandler(BaseTaskHandler):
     """Handler per task di Question Answering."""
@@ -429,12 +428,14 @@ class DraftingHandler(BaseTaskHandler):
                 rating_weights[rating] += fb.author.authority_score
             
             revised_target = fb.feedback_data.get("revised_target")
+            reasoning = fb.feedback_data.get("reasoning", "")
             if revised_target:
                 revised_drafts.append({
                     'draft': revised_target,
                     'author': fb.author.username,
                     'authority': fb.author.authority_score,
-                    'rating': rating
+                    'rating': rating,
+                    'reasoning': reasoning
                 })
         
         total_weight = sum(rating_weights.values())
@@ -480,3 +481,35 @@ class DraftingHandler(BaseTaskHandler):
         else:
             distance_from_threshold = abs(better_percentage - 50) / 50
             return 1 - distance_from_threshold
+    
+    def calculate_correctness(self, feedback: models.Feedback, ground_truth: Dict[str, Any]) -> float:
+        """Calcola correctness per Drafting confrontando con il target ground truth."""
+        if not ground_truth or 'target' not in ground_truth:
+            return 0.0
+        
+        user_revision = feedback.feedback_data.get("revised_target", "").strip()
+        ground_truth_target = ground_truth['target'].strip()
+        
+        if not user_revision or not ground_truth_target:
+            return 0.0
+        
+        # Semantic similarity semplificata per drafting legale
+        user_words = set(user_revision.lower().split())
+        gt_words = set(ground_truth_target.lower().split())
+        
+        # Jaccard similarity
+        intersection = len(user_words & gt_words)
+        union = len(user_words | gt_words)
+        
+        if union == 0:
+            return 0.0
+        
+        # Bonus per preservare termini legali chiave
+        legal_terms = {'shall', 'agreement', 'party', 'hereby', 'whereas', 'pursuant', 'notwithstanding'}
+        gt_legal_terms = gt_words & legal_terms
+        user_legal_terms = user_words & legal_terms
+        
+        legal_preservation = len(gt_legal_terms & user_legal_terms) / max(len(gt_legal_terms), 1)
+        
+        base_similarity = intersection / union
+        return min(1.0, base_similarity * 0.7 + legal_preservation * 0.3)

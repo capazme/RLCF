@@ -28,6 +28,7 @@ class TaskSchemaDefinition(BaseModel):
     # This represents the structure like {"field_name": "str", "another_field": "List[int]"}
     input_data: Dict[str, str]
     feedback_data: Dict[str, str]
+    ground_truth_keys: List[str] = Field(default_factory=list)
 
 class TaskConfig(BaseModel):
     task_types: Dict[str, TaskSchemaDefinition]

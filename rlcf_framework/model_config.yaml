@@ -44,3 +44,14 @@ baseline_credentials:
           default: 0.0
         expression: ''
         default: 0.0
+ai_models:
+  - name: gpt-3.5-turbo-openrouter
+    type: openrouter
+    api_key_env: OPENROUTER_API_KEY
+    route: openai/gpt-3.5-turbo
+  - name: llama-2-7b-chat-local
+    type: local
+    endpoint: http://localhost:8000/v1/completions
+  - name: mock-model
+    type: local
+    path: /path/to/local/model_weights
