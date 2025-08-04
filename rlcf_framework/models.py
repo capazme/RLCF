@@ -11,8 +11,9 @@ from sqlalchemy import (
     ForeignKey,
 )
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.sqlite import JSON # Import for JSON type
+from sqlalchemy.dialects.sqlite import JSON  # Import for JSON type
 from .database import Base
+
 
 class TaskType(str, enum.Enum):
     SUMMARIZATION = "SUMMARIZATION"
@@ -22,6 +23,9 @@ class TaskType(str, enum.Enum):
     NLI = "NLI"
     NER = "NER"
     DRAFTING = "DRAFTING"
+    RISK_SPOTTING = "RISK_SPOTTING"
+    DOCTRINE_APPLICATION = "DOCTRINE_APPLICATION"
+
 
 class TaskStatus(str, enum.Enum):
     OPEN = "OPEN"
@@ -59,9 +63,9 @@ class LegalTask(Base):
     __tablename__ = "legal_tasks"
 
     id = Column(Integer, primary_key=True, index=True)
-    task_type = Column(String, nullable=False) # New: Type of task
-    input_data = Column(JSON, nullable=False) # New: Flexible input data
-    ground_truth_data = Column(JSON, nullable=True) # Nuovo campo!
+    task_type = Column(String, nullable=False)  # New: Type of task
+    input_data = Column(JSON, nullable=False)  # New: Flexible input data
+    ground_truth_data = Column(JSON, nullable=True)  # Nuovo campo!
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     status = Column(String, default=TaskStatus.OPEN)
 
@@ -74,7 +78,7 @@ class Response(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, ForeignKey("legal_tasks.id"))
-    output_data = Column(JSON, nullable=False) # New: Flexible output data
+    output_data = Column(JSON, nullable=False)  # New: Flexible output data
     model_version = Column(String)
     generated_at = Column(DateTime, default=datetime.datetime.utcnow)
 
@@ -92,10 +96,10 @@ class Feedback(Base):
     accuracy_score = Column(Float)
     utility_score = Column(Float)
     transparency_score = Column(Float)
-    feedback_data = Column(JSON, nullable=False) # New: Flexible feedback data
+    feedback_data = Column(JSON, nullable=False)  # New: Flexible feedback data
     community_helpfulness_rating = Column(Integer, default=0)
     consistency_score = Column(Float, nullable=True)
-    correctness_score = Column(Float, nullable=True) # Nuovo campo per il ground truth
+    correctness_score = Column(Float, nullable=True)  # Nuovo campo per il ground truth
     submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     author = relationship("User", back_populates="feedback")
@@ -114,32 +118,33 @@ class FeedbackRating(Base):
     rated_feedback = relationship("Feedback", back_populates="ratings")
     rater = relationship("User")
 
+
 class BiasReport(Base):
     __tablename__ = "bias_reports"
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, ForeignKey("legal_tasks.id"))
     user_id = Column(Integer, ForeignKey("users.id"))
-    bias_type = Column(String) # es. "PROFESSIONAL_CLUSTERING"
+    bias_type = Column(String)  # es. "PROFESSIONAL_CLUSTERING"
     bias_score = Column(Float)
     calculated_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
 class DevilsAdvocateAssignment(Base):
     __tablename__ = "devils_advocate_assignments"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, ForeignKey("legal_tasks.id"))
     user_id = Column(Integer, ForeignKey("users.id"))
     instructions = Column(Text)
     assigned_at = Column(DateTime, default=datetime.datetime.utcnow)
-    
+
     task = relationship("LegalTask")
     user = relationship("User")
 
 
 class AccountabilityReport(Base):
     __tablename__ = "accountability_reports"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     cycle_start = Column(DateTime, nullable=False)
     cycle_end = Column(DateTime, nullable=False)

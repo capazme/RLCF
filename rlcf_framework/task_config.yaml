@@ -57,3 +57,23 @@ task_types:
       revised_target: str
       rating: Literal["better", "worse"]
       reasoning: str
+  RISK_SPOTTING:
+    input_data:
+      text: str
+    ground_truth_keys:
+    - risk_labels
+    - severity
+    feedback_data:
+      validated_risk_labels: List[str]
+      validated_severity: int
+      reasoning: str
+  DOCTRINE_APPLICATION:
+    input_data:
+      facts: str
+      question: str
+    ground_truth_keys:
+    - label
+    - rationale
+    feedback_data:
+      chosen_label: Literal["yes", "no"]
+      reasoning: str

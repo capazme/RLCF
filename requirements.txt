@@ -1,6 +1,8 @@
 fastapi
 uvicorn
 sqlalchemy
+aiosqlite
+greenlet
 pydantic
 numpy
 scipy
@@ -9,3 +11,4 @@ pyyaml
 gradio
 requests
 typing_extensions
+asteval

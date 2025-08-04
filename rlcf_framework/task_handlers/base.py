@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from typing import List, Dict, Any
 from .. import models
+
 
 class BaseTaskHandler(ABC):
     """
@@ -11,20 +13,32 @@ class BaseTaskHandler(ABC):
     ensuring a consistent structure for task-specific logic such as feedback aggregation,
     consistency calculation, and data formatting for export.
     """
-    def __init__(self, db: Session, task: models.LegalTask):
+
+    def __init__(self, db: AsyncSession, task: models.LegalTask):
         """
         Initializes the BaseTaskHandler with a database session and a legal task.
 
         Args:
-            db: The SQLAlchemy session for database operations.
+            db: The SQLAlchemy async session for database operations.
             task: The LegalTask instance associated with this handler.
         """
         self.db = db
         self.task = task
-        self.feedbacks = self.db.query(models.Feedback)            .join(models.Response)            .filter(models.Response.task_id == self.task.id).all()
+        self._feedbacks = None  # Will be loaded async
+
+    async def get_feedbacks(self):
+        """Load feedbacks asynchronously if not already loaded."""
+        if self._feedbacks is None:
+            result = await self.db.execute(
+                select(models.Feedback)
+                .join(models.Response)
+                .filter(models.Response.task_id == self.task.id)
+            )
+            self._feedbacks = result.scalars().all()
+        return self._feedbacks
 
     @abstractmethod
-    def aggregate_feedback(self) -> Dict[str, Any]:
+    async def aggregate_feedback(self) -> Dict[str, Any]:
         """
         Aggregates feedback specific to the task type.
 
@@ -37,7 +51,9 @@ class BaseTaskHandler(ABC):
         pass
 
     @abstractmethod
-    def calculate_consistency(self, feedback: models.Feedback, aggregated_result: Dict[str, Any]) -> float:
+    def calculate_consistency(
+        self, feedback: models.Feedback, aggregated_result: Dict[str, Any]
+    ) -> float:
         """
         Calculates the consistency score for a given feedback against the aggregated result.
 
@@ -70,7 +86,9 @@ class BaseTaskHandler(ABC):
         pass
 
     @abstractmethod
-    def calculate_correctness(self, feedback: models.Feedback, ground_truth: Dict[str, Any]) -> float:
+    def calculate_correctness(
+        self, feedback: models.Feedback, ground_truth: Dict[str, Any]
+    ) -> float:
         """
         Calculates the correctness score for a given feedback against the ground truth.
 

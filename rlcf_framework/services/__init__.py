@@ -1,1 +1,1 @@
-from . import task_service
+from . import task_service as task_service

@@ -1,7 +1,9 @@
 from .base import BaseTaskHandler
 from collections import Counter
 from typing import List, Dict, Any
+from sqlalchemy.ext.asyncio import AsyncSession
 from .. import models
+
 
 class ClassificationHandler(BaseTaskHandler):
     """
@@ -11,7 +13,18 @@ class ClassificationHandler(BaseTaskHandler):
     calculating consistency, and formatting data for export related to
     classification tasks.
     """
-    def aggregate_feedback(self) -> Dict[str, Any]:
+
+    def __init__(self, db: AsyncSession, task: models.LegalTask):
+        """
+        Initializes the ClassificationHandler with a database session and a legal task.
+
+        Args:
+            db: The SQLAlchemy async session for database operations.
+            task: The LegalTask instance associated with this handler.
+        """
+        super().__init__(db, task)
+
+    async def aggregate_feedback(self) -> Dict[str, Any]:
         """
         Aggregates feedback for classification tasks.
 
@@ -22,18 +35,23 @@ class ClassificationHandler(BaseTaskHandler):
             A dictionary containing the consensus answer (primary labels)
             and detailed weighted label counts.
         """
+        feedbacks = await self.get_feedbacks()
         weighted_labels = Counter()
-        for fb in self.feedbacks:
+        for fb in feedbacks:
             labels_tuple = tuple(sorted(fb.feedback_data.get("validated_labels", [])))
-            if not labels_tuple: continue
+            if not labels_tuple:
+                continue
             weighted_labels[labels_tuple] += fb.author.authority_score
 
-        if not weighted_labels: return {"error": "No valid feedback."}
+        if not weighted_labels:
+            return {"error": "No valid feedback."}
 
         primary_labels = list(weighted_labels.most_common(1)[0][0])
         return {"consensus_answer": primary_labels, "details": weighted_labels}
 
-    def calculate_consistency(self, feedback: models.Feedback, aggregated_result: Dict[str, Any]) -> float:
+    def calculate_consistency(
+        self, feedback: models.Feedback, aggregated_result: Dict[str, Any]
+    ) -> float:
         """
         Calculates the consistency of a single feedback with the aggregated result
         for a classification task.
@@ -49,8 +67,14 @@ class ClassificationHandler(BaseTaskHandler):
             A float representing the consistency score.
         """
         validated_labels = feedback.feedback_data.get("validated_labels")
-        if validated_labels is None: return 0.0
-        return 1.0 if sorted(validated_labels) == sorted(aggregated_result.get("consensus_answer")) else 0.0
+        if validated_labels is None:
+            return 0.0
+        return (
+            1.0
+            if sorted(validated_labels)
+            == sorted(aggregated_result.get("consensus_answer"))
+            else 0.0
+        )
 
     def format_for_export(self, format_type: str) -> List[Dict[str, Any]]:
         """
@@ -68,7 +92,9 @@ class ClassificationHandler(BaseTaskHandler):
         # ...
         return []
 
-    def calculate_correctness(self, feedback: models.Feedback, ground_truth: Dict[str, Any]) -> float:
+    def calculate_correctness(
+        self, feedback: models.Feedback, ground_truth: Dict[str, Any]
+    ) -> float:
         """
         Calculates the correctness score for a classification feedback.
 
@@ -82,9 +108,11 @@ class ClassificationHandler(BaseTaskHandler):
             1.0 if the validated labels match the ground truth labels, otherwise 0.0.
         """
         validated_labels = feedback.feedback_data.get("validated_labels")
-        if validated_labels is None: return 0.0
+        if validated_labels is None:
+            return 0.0
 
         ground_truth_labels = ground_truth.get("labels")
-        if ground_truth_labels is None: return 0.0
+        if ground_truth_labels is None:
+            return 0.0
 
         return 1.0 if sorted(validated_labels) == sorted(ground_truth_labels) else 0.0
